@@ -4,9 +4,9 @@
 * as an interface between the DAVID-Laserscanner software and 
 * a motor-driven laser for automated 3D laser scanning.
 * It supports additional switches and a LC display for manual control.
-* Some functions will be supported by future DAVID versions (probably 3.0).
+* Some functions are only supported by DAVID 3.x.
 * 
-* Copyright (C) 2010 Sven Molkenstruck
+* Copyright (C) 2011 Sven Molkenstruck
 * 
 * This program is free software; you can redistribute it and/or modify it under 
 * the terms of the GNU General Public License as published by the 
@@ -26,7 +26,7 @@
 #include <LiquidCrystal.h>
 
 
-const char PROGRAM_VERSION[20] = "Katie Version 1.0";
+const char PROGRAM_VERSION[20] = "Katie Version 1.1";
 
 
 //////////////////////////////////
@@ -59,7 +59,7 @@ const unsigned long HOMING_MOTOR_DELAY = 1000;  // defines the speed for the "re
 // Gearbox backlash compensation:
 const long BACKLASH_STEPS = 500;  // number of steps
 
-const long MIDDLE_POS = -2000;  // counter position where the laser is "in the middle" of the object / camera image
+const long MIDDLE_POS = 2000;  // counter position where the laser is "in the middle" of the object / camera image
 const long NUM_STEPS_FAST = 100;  // number of steps to go when receiving command "<" or ">"
 
 // Time interval [ms] for display updates:
@@ -405,15 +405,16 @@ void loop()
   // Motor: OFF, AUTO, or ON. See #eMode declaration.
   eMode motorMode = analogToMode(analogRead(PIN_IN_MOTOR));
 
+  // Direction: -1=down, 1=up
+  g_dir = analogToDiscrete(analogRead(PIN_IN_DIR),2) * 2 - 1;
+  
   if (FORCE_REMOTE_CONTROL)
   {
    // Overwrite to AUTO:
    laserMode = MODE_AUTO;
    motorMode = MODE_AUTO;
+   g_dir = 1;
   }
-  
-  // Direction: -1=down, 1=up
-  g_dir = analogToDiscrete(analogRead(PIN_IN_DIR),2) * 2 - 1;
   
   // Speed: 0 to NUM_SPEED_STEPS-1
   g_speed = analogToDiscrete(analogRead(PIN_IN_SPEED),NUM_SPEED_STEPS);
@@ -464,7 +465,7 @@ void loop()
     else if ('#' == ch)  // move laser into camera image:
     {
       if (MODE_AUTO==laserMode) setLaser(true);                               // switch laser on
-      moveMotorAbs_withDisplay(MIDDLE_POS, HOMING_MOTOR_DELAY);               // move to MIDDLE_POS
+      moveMotorAbs_withDisplay(g_dir*MIDDLE_POS, HOMING_MOTOR_DELAY);         // move to MIDDLE_POS
     }
     else if ('P' == ch)  // Prepare for next scan:
     {
@@ -473,6 +474,27 @@ void loop()
       if (MODE_AUTO==laserMode) setLaser(false);                              // switch laser off
     }
   }
+  
+  if ('m' == ch)    // move motor with given number of steps
+  {
+    int sign = 1;  // The direction (+1 or -1)
+    int numSteps = 0;  // number of steps to move
+    for (int i=0; i<6; ++i)  // read up to 6 characters
+    {
+      while (Serial.available()<1) {};  // wait for new character
+      int ch2 = Serial.read();  // read one new character
+      if      ('+'==ch2) sign = 1;  // set positive direction
+      else if ('-'==ch2) sign = -1;  // set negative direction
+      else if (ch2>='0' && ch2<='9') numSteps = numSteps*10 + (ch2-'0');  // read one numeric digit into numSteps
+      else break;  // invalid character, e.g. semicolon --> stop reading
+    }
+    numSteps *= sign*g_dir;  // apply direction + or -
+    if (MODE_AUTO==motorMode)
+    {
+      moveMotorRel(numSteps);  // move!
+    }
+  }
+
   if (MODE_AUTO==laserMode)  // allow remote control of laser
   {
     if ('S' == ch) setLaser(true);                                            // scan start --> switch laser on
@@ -484,8 +506,8 @@ void loop()
   
   if ('T' == ch)  // received "Stop"
   {
-    if (MODE_AUTO==motorMode) moveMotorHome_withDisplay(HOMING_MOTOR_DELAY);  // move to zero
     if (MODE_AUTO==laserMode) setLaser(false);                                // switch laser off
+    if (MODE_AUTO==motorMode) moveMotorHome_withDisplay(HOMING_MOTOR_DELAY);  // move to zero
   }
 
   if ('0' == ch) g_motorPos = 0;                                              // Reset step counter
